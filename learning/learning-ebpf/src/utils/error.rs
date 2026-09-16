@@ -1,8 +1,18 @@
 #[derive(Debug, Clone, Copy)]
+#[repr(i32)]
+
+/**
+ * i need to expand this Error ( this will be a sole error )
+ * 
+ * key features 
+ * 
+ * Singelton 
+ * concurrency supported ( more than one error place for async {If need be})
+ */
 pub enum ParseError {
-    InvalidEthernet,
-    UnsupportedProtocol,
-    Truncated,
+    InvalidEthernet = 1,
+    UnsupportedProtocol = 2,
+    Truncated = 3,
 }
 
 impl core::fmt::Display for ParseError {
@@ -13,4 +23,10 @@ impl core::fmt::Display for ParseError {
             ParseError::Truncated => write!(f, "truncated packet"),
         }
     }
+}
+
+#[derive(Debug)]
+pub enum DriverError {
+    Timeout,
+    Overrun,
 }

@@ -1,6 +1,3 @@
-#![no_std]
-#![no_main]
-
 // use aya_log_ebpf::info;
 // use aya_ebpf::programs::XdpContext;
 
