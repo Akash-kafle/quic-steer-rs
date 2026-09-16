@@ -5,14 +5,18 @@ use aya_ebpf::{
     bindings::xdp_action, macros::xdp, programs::XdpContext,
 };
 
-use core::mem;
 use network_types::{
     eth::{EthHdr, EtherType}, ip::{IpProto, Ipv4Hdr, Ipv6Hdr}, tcp::TcpHdr, udp::UdpHdr,
+    icmp::{Icmpv6Hdr, Icmpv4Hdr},
 };
 use aya_log_ebpf::info;
-use learning_common::{NormalizedPacket, RING_BUFF, get_or_assign_id};
+use learning_common::{NormalizedPacket, get_or_assign_id, COUNTERS, COUNTER_PASS, COUNTER_DROP};
 
-use crate::utils::error::ParseError;
+
+use crate::utils::{error::ParseError, rules::IcmpDecision};
+use crate::utils::rules::ParseRule;
+use crate::utils::parser::{ptr_at};
+use crate::utils::memory::RING_BUFF;
 
 mod utils;
 
@@ -24,22 +28,18 @@ pub fn learning(ctx: XdpContext) -> u32 {
             let _ = RING_BUFF.output::<NormalizedPacket>(&packet, 0);
         }
         Ok(None) => {}
-        Err(_) => {}
+        Err(_) => {
+            info!(ctx, "XDP_DROP: packet denied by policy");
+            if let Some(ctr) = unsafe { COUNTERS.get_ptr_mut(COUNTER_DROP) } {
+                unsafe { *ctr += 1 };
+            }
+            return xdp_action::XDP_DROP;
+        }
     }
-    xdp_action::XDP_PASS
-}
-
-#[inline(always)]
-fn ptr_at<T>(ctx: &XdpContext, offset: usize) -> Result<*const T, ParseError> {
-    let start = ctx.data();
-    let end = ctx.data_end();
-    let len = mem::size_of::<T>();
-
-    if start + offset + len > end {
-        return Err(ParseError::InvalidEthernet);
+    if let Some(ctr) = unsafe { COUNTERS.get_ptr_mut(COUNTER_PASS) } {
+        unsafe { *ctr += 1 };
     }
-
-    Ok((start + offset) as *const T)
+    return xdp_action::XDP_PASS;
 }
 
 fn try_learning(ctx: &XdpContext) -> Result<Option<NormalizedPacket>, ParseError> {
@@ -53,8 +53,8 @@ fn try_learning(ctx: &XdpContext) -> Result<Option<NormalizedPacket>, ParseError
             let dst = unsafe { (*ipv4).dst_addr };
 
             let mut pkt = NormalizedPacket::default();
-            pkt.src_ip = u32::from_ne_bytes(src);
-            pkt.dst_ip = u32::from_ne_bytes(dst);
+            pkt.src_ip = u32::from_be_bytes(src);
+            pkt.dst_ip = u32::from_be_bytes(dst);
             pkt.protocol = proto as u8;
 
             let tot_len = u16::from_be_bytes(unsafe { (*ipv4).tot_len });
@@ -76,19 +76,30 @@ fn try_learning(ctx: &XdpContext) -> Result<Option<NormalizedPacket>, ParseError
                         return Ok(None);
                     }
                 }
+                IpProto::Icmp => {
+                    // Correct offset: Eth + IPv4 header only
+                    let icmphdr: *const Icmpv4Hdr = ptr_at(ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
+                    match ParseRule::parse_icmpv4(icmphdr){
+                        IcmpDecision::Allow => {
+                            return Ok(Some(pkt))
+                        }
+                        IcmpDecision::Deny => {
+                            return Err(ParseError::UnsupportedProtocol);
+                        }
+                    }
+                }
                 _ => {}
             }
-
-            info!(ctx, "This is ipv4");
-            info!(ctx, "SRC IP: {:i}, SRC PORT: {}", pkt.src_ip, pkt.src_port);
-            Ok(Some(pkt))
+            
+            // info!(ctx, "This is ipv4");
+            
+            return Ok(Some(pkt));
         }
         Ok(EtherType::Ipv6) => {
             let ipv6: *const Ipv6Hdr = ptr_at(ctx, EthHdr::LEN)?;
             let proto = unsafe { (*ipv6).next_hdr() }.map_err(|_| ParseError::Truncated)?;
             let src = unsafe { (*ipv6).src_addr };
             let dst = unsafe { (*ipv6).dst_addr };
-
             let mut pkt = NormalizedPacket::default();
             pkt.src_ip = get_or_assign_id(src);
             pkt.dst_ip = get_or_assign_id(dst);
@@ -110,20 +121,30 @@ fn try_learning(ctx: &XdpContext) -> Result<Option<NormalizedPacket>, ParseError
                         return Ok(None);
                     }
                 }
+                IpProto::Ipv6Icmp => {
+                    // Correct offset: Eth + IPv6 header only
+                    let icmphdr: *const Icmpv6Hdr = ptr_at(ctx, EthHdr::LEN + Ipv6Hdr::LEN)?;
+                    match ParseRule::parse_icmpv6(icmphdr){
+                        IcmpDecision::Allow => {
+                            return Ok(Some(pkt))
+                        }
+                        IcmpDecision::Deny => {
+                            return Err(ParseError::UnsupportedProtocol);
+                        }
+                    }
+                }
                 _ => {}
             }
 
-            info!(ctx, "This is ipv6");
-            info!(ctx, "SRC IP ID: {}, SRC PORT: {}", pkt.src_ip, pkt.src_port);
-            Ok(Some(pkt))
+            // info!(ctx, "This is ipv6");
+            return Ok(Some(pkt));
         }
         _ => {
-            info!(ctx, "Got non-IP packet");
+            // info!(ctx, "Got non-IP packet");
             Ok(None)
         }
     }
 }
-
 
 #[cfg(not(test))]
 #[panic_handler]

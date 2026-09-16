@@ -1,5 +1,14 @@
 #[derive(Debug, Clone, Copy)]
 #[repr(i32)]
+
+/**
+ * i need to expand this Error ( this will be a sole error )
+ * 
+ * key features 
+ * 
+ * Singelton 
+ * concurrency supported ( more than one error place for async {If need be})
+ */
 pub enum ParseError {
     InvalidEthernet = 1,
     UnsupportedProtocol = 2,

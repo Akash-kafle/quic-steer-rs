@@ -33,6 +33,12 @@ impl Default for NormalizedPacket {
     }
 }
 
+pub const COUNTER_PASS: u32 = 0;
+pub const COUNTER_DROP: u32 = 1;
+
+#[map]
+pub static COUNTERS: Array<u64> = Array::with_max_entries(2, 0);
+
 #[map]
 pub static IPV6_TO_ID: HashMap<[u8;16], u32> = HashMap::with_max_entries(1024, 0);
 
@@ -63,11 +69,7 @@ pub fn get_or_assign_id(ip: [u8;16]) -> u32 {
 pub fn ip_from_id(id: u32) -> Option<[u8;16]> {
     unsafe { IP_BY_ID.get(&id).map(|v| *v) }
 }
-
 #[cfg(feature = "user")]
 unsafe impl aya::Pod for NormalizedPacket {}
 
-// create a ring buffer for the header normalization between v4 and v6 
-#[map]
-pub static RING_BUFF: RingBuf = RingBuf::with_byte_size(256 * 4096, 0);
 

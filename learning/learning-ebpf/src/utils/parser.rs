@@ -1,4 +1,6 @@
 use core::error;
+use core::mem;
+
 
 use aya_ebpf::{
     bindings::xdp_action, macros::{map,xdp}, maps::{RingBuf, xdp}, programs::XdpContext,
@@ -100,4 +102,17 @@ pub fn split_32(pair: [u8;32]) -> ([u8;16],[u8;16]) {
 
 pub fn ipv4_pair_to_32(src4: [u8;4], dst4: [u8;4]) -> [u8;32] {
     pair_to_32(ipv4_to_16_zeroed(src4), ipv4_to_16_zeroed(dst4))
+}
+
+#[inline(always)]
+pub fn ptr_at<T>(ctx: &XdpContext, offset: usize) -> Result<*const T, ParseError> {
+    let start = ctx.data();
+    let end = ctx.data_end();
+    let len = mem::size_of::<T>();
+
+    if start + offset + len > end {
+        return Err(ParseError::InvalidEthernet);
+    }
+
+    Ok((start + offset) as *const T)
 }

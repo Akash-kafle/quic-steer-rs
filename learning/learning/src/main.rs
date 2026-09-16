@@ -1,6 +1,6 @@
 use anyhow::Context as _;
 use aya::{
-    maps::RingBuf,
+    maps::{RingBuf, Array},
     programs::{Xdp, XdpMode},
 };
 use clap::Parser;
@@ -88,8 +88,8 @@ async fn main() -> anyhow::Result<()> {
                 while let Some(item) = rb.next() {
                     if item.len() >= std::mem::size_of::<NormalizedPacket>() {
                         let packet = unsafe { *(item.as_ptr() as *const NormalizedPacket) };
-                        let src_ip = Ipv4Addr::from(u32::to_be(packet.src_ip));
-                        let dst_ip = Ipv4Addr::from(u32::to_be(packet.dst_ip));
+                        let src_ip = Ipv4Addr::from(u32::to_le(packet.src_ip));
+                        let dst_ip = Ipv4Addr::from(u32::to_le(packet.dst_ip));
 
                         if skip_ips.contains(&src_ip) || skip_ips.contains(&dst_ip) {
                             continue;
@@ -121,6 +121,15 @@ async fn main() -> anyhow::Result<()> {
     info!("Waiting for Ctrl-C...");
     ctrl_c.await?;
     info!("Exiting...");
+
+    // Print drop/pass counters from the eBPF map
+    if let Some(map) = ebpf.map("COUNTERS") {
+        if let Ok(counters) = Array::<_, u64>::try_from(map) {
+            let passes = counters.get(&0, 0).unwrap_or(0);
+            let drops = counters.get(&1, 0).unwrap_or(0);
+            info!("Stats — passed: {}  dropped: {}", passes, drops);
+        }
+    }
 
     Ok(())
 }
